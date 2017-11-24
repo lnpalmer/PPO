@@ -1,5 +1,8 @@
 import torch
 
+def cuda_if(torch_object, cuda):
+    return torch_object.cuda() if cuda else torch_object
+
 def gae(rewards, masks, values, gamma, lambd):
     """ Generalized Advantage Estimation
 
@@ -17,8 +20,12 @@ def gae(rewards, masks, values, gamma, lambd):
     """
     T, N, _ = rewards.size()
 
+    cuda = rewards.is_cuda
+
     advantages = torch.zeros(T, N, 1)
+    advantages = cuda_if(advantages, cuda)
     advantage_t = torch.zeros(N, 1)
+    advantage_t = cuda_if(advantage_t, cuda)
 
     for t in reversed(range(T)):
         delta = rewards[t] + values[t + 1].data * gamma * masks[t] - values[t].data

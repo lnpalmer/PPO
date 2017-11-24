@@ -5,13 +5,14 @@ import torch.nn as nn
 import torch.nn.functional as Fnn
 from torch.autograd import Variable
 
-from utils import gae
+from utils import gae, cuda_if
 
 
 class PPO:
     def __init__(self, policy, venv, optimizer, clip=.1, gamma=.99, lambd=.95,
                  worker_steps=128, sequence_steps=32, batch_steps=256,
-                 opt_epochs=3, value_coef=1., entropy_coef=.01, max_grad_norm=.5):
+                 opt_epochs=3, value_coef=1., entropy_coef=.01, max_grad_norm=.5,
+                 cuda=False):
         """ Proximal Policy Optimization algorithm class
 
         Evaluates a policy over a vectorized environment and
@@ -46,6 +47,7 @@ class PPO:
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
         self.max_grad_norm = max_grad_norm
+        self.cuda = cuda
 
         self.objective = PPOObjective(clip)
 
@@ -117,15 +119,12 @@ class PPO:
 
                 loss = policy_loss + value_loss * self.value_coef + entropy_loss * self.entropy_coef
 
-                print('policy loss: %s' % str(policy_loss))
-                print('value loss: %s' % str(value_loss))
-                print('entropy loss: %s' % str(entropy_loss))
-
                 loss.backward()
                 torch.nn.utils.clip_grad_norm(self.policy.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
             taken_steps += steps
+            print(taken_steps)
 
     def interact(self):
         """ Interacts with the environment
@@ -143,13 +142,18 @@ class PPO:
 
         # TEMP needs to be generalized, does conv-specific transpose for PyTorch
         obs = torch.zeros(T + 1, N, 4, 84, 84)
+        obs = cuda_if(obs, self.cuda)
         rewards = torch.zeros(T, N, 1)
+        rewards = cuda_if(rewards, self.cuda)
         masks = torch.zeros(T, N, 1)
+        masks = cuda_if(masks, self.cuda)
         actions = torch.zeros(T, N, 1).long()
+        actions = cuda_if(actions, self.cuda)
 
         for t in range(T):
             ob = torch.from_numpy(self.last_ob.transpose((0, 3, 1, 2))).float()
             ob = Variable(ob / 255.)
+            ob = cuda_if(ob, self.cuda)
             obs[t] = ob.data
 
             pi, v = self.policy(ob)
@@ -164,6 +168,7 @@ class PPO:
 
         ob = torch.from_numpy(self.last_ob.transpose((0, 3, 1, 2))).float()
         ob = Variable(ob / 255.)
+        ob = cuda_if(ob, self.cuda)
         obs[T] = ob.data
 
         steps = N * T

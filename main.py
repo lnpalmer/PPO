@@ -1,4 +1,5 @@
 import argparse
+import torch
 import torch.optim as optim
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from baselines.common.vec_env.vec_frame_stack import VecFrameStack
@@ -6,6 +7,7 @@ from baselines.common.vec_env.vec_frame_stack import VecFrameStack
 from envs import make_env, RenderSubprocVecEnv
 from models import AtariCNN
 from ppo import PPO
+from utils import cuda_if
 
 
 parser = argparse.ArgumentParser(description='PPO', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -24,10 +26,13 @@ parser.add_argument('--lambd', type=float, default=.95, help='GAE lambda paramet
 parser.add_argument('--value-coef', type=float, default=1., help='value loss coeffecient')
 parser.add_argument('--entropy-coef', type=float, default=.01, help='entropy loss coeffecient')
 parser.add_argument('--max-grad-norm', type=float, default=.5, help='grad norm to clip at')
-parser.add_argument('--seed', type=int, default=0, help='random seed')
+parser.add_argument('--no-cuda', action='store_true', help='disable CUDA acceleration')
 parser.add_argument('--render', action='store_true', help='render training environments')
 parser.add_argument('--render-interval', type=int, default=4, help='steps between environment renders')
+parser.add_argument('--seed', type=int, default=0, help='random seed')
 args = parser.parse_args()
+
+cuda = torch.cuda.is_available() and not args.no_cuda
 
 env_fns = []
 for rank in range(args.num_workers):
@@ -39,6 +44,7 @@ else:
 venv = VecFrameStack(venv, 4)
 
 policy = {'cnn': AtariCNN}[args.arch](venv.action_space.n)
+policy = cuda_if(policy, cuda)
 
 optimizer = optim.Adam(policy.parameters(), lr=args.lr)
 
@@ -47,5 +53,5 @@ algorithm = PPO(policy, venv, optimizer, clip=args.clip, gamma=args.gamma,
                 sequence_steps=args.sequence_steps,
                 batch_steps=args.batch_steps,
                 value_coef=args.value_coef, entropy_coef=args.entropy_coef,
-                max_grad_norm=args.max_grad_norm)
+                max_grad_norm=args.max_grad_norm, cuda=cuda)
 algorithm.run(args.total_steps)
