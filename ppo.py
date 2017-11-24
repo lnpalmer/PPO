@@ -4,6 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as Fnn
 from torch.autograd import Variable
 
+from utils import gae
+
+
 class PPO:
     def __init__(self, policy, venv, optimizer, clip=.1, gamma=.99, lambd=.95,
                  worker_steps=128, sequence_steps=32, batch_steps=256):
@@ -33,7 +36,9 @@ class PPO:
         self.sequence_steps = sequence_steps
         self.batch_steps = batch_steps
 
-        self.objective = PPOObjective(clip, gamma, lambd)
+        self.objective = PPOObjective(clip)
+        self.gamma = gamma
+        self.lambd = lambd
 
         self.last_ob = self.venv.reset()
 
@@ -45,10 +50,19 @@ class PPO:
         """
         taken_steps = 0
 
-        while taken_steps < total_steps:
-            obs, rewards, dones, actions, steps = self.interact()
+        N = self.num_workers
+        T = self.worker_steps
 
-            print(obs.size())
+        while taken_steps < total_steps:
+            obs, rewards, masks, actions, steps = self.interact()
+
+            # compute advantages, returns with GAE
+            # TEMP upgrade to support recurrence
+            obs = obs.view(((T + 1) * N,) + obs.size()[2:])
+            obs = Variable(obs)
+            _, values = self.policy(obs)
+            values = values.view(T + 1, N, 1)
+            advantages, returns = gae(rewards, masks, values, self.gamma, self.lambd)
 
             taken_steps += steps
 
@@ -56,11 +70,11 @@ class PPO:
         """ Interacts with the environment
 
         Returns:
-            obs (torch.FloatTensor): observations shaped [T + 1 x N x ...]
-            rewards (torch.FloatTensor): rewards shaped [T x N x 1]
-            masks (torch.FloatTensor): continuation masks shaped [T x N x 1]
+            obs (FloatTensor): observations shaped [T + 1 x N x ...]
+            rewards (FloatTensor): rewards shaped [T x N x 1]
+            masks (FloatTensor): continuation masks shaped [T x N x 1]
                 zero at done timesteps, one otherwise
-            actions (torch.LongTensor): discrete actions shaped [T x N x 1]
+            actions (LongTensor): discrete actions shaped [T x N x 1]
             steps (int): total number of steps taken
         """
         N = self.num_workers
@@ -96,10 +110,8 @@ class PPO:
         return obs, rewards, masks, actions, steps
 
 class PPOObjective(nn.Module):
-    def __init__(self, clip, gamma, lambd):
+    def __init__(self, clip):
         self.clip = clip
-        self.gamma = gamma
-        self.lambd = lambd
 
     def forward(self, inputs):
         raise NotImplementedError
