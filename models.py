@@ -25,6 +25,7 @@ def ortho_weights(shape, scale=1.):
     if len(shape) == 4:
         return torch.from_numpy((scale * q[:, :shape[1], :shape[2]]).astype(np.float32))
 
+
 def atari_initializer(module):
     """ Parameter initializer for Atari models
 
