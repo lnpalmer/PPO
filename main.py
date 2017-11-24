@@ -20,6 +20,9 @@ parser.add_argument('--lr', type=float, default=2.5e-4, help='learning rate')
 parser.add_argument('--clip', type=float, default=.1, help='probability ratio clipping range')
 parser.add_argument('--gamma', type=float, default=.99, help='discount factor')
 parser.add_argument('--lambd', type=float, default=.95, help='GAE lambda parameter')
+parser.add_argument('--value-coef', type=float, default=1., help='value loss coeffecient')
+parser.add_argument('--entropy-coef', type=float, default=.01, help='entropy loss coeffecient')
+parser.add_argument('--max-grad-norm', type=float, default=.5, help='grad norm to clip at')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 args = parser.parse_args()
 
@@ -36,5 +39,7 @@ optimizer = optim.Adam(policy.parameters(), lr=args.lr)
 algorithm = PPO(policy, venv, optimizer, clip=args.clip, gamma=args.gamma,
                 lambd=args.lambd, worker_steps=args.worker_steps,
                 sequence_steps=args.sequence_steps,
-                batch_steps=args.batch_steps)
+                batch_steps=args.batch_steps,
+                value_coef=args.value_coef, entropy_coef=args.entropy_coef,
+                max_grad_norm=args.max_grad_norm)
 algorithm.run(args.total_steps)
