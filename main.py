@@ -11,6 +11,7 @@ parser = argparse.ArgumentParser(description='PPO', formatter_class=argparse.Arg
 parser.add_argument('env_id', type=str, help='Gym environment id')
 parser.add_argument('--arch', type=str, default='cnn', help='policy architecture, {lstm, cnn}')
 parser.add_argument('--num-workers', type=int, default=8, help='number of parallel actors')
+parser.add_argument('--opt-epochs', type=int, default=3, help='optimization epochs between environment interaction')
 parser.add_argument('--total-steps', type=int, default=int(10e6), help='total number of environment steps to take')
 parser.add_argument('--worker-steps', type=int, default=128, help='steps per worker between optimization rounds')
 parser.add_argument('--sequence-steps', type=int, default=32, help='steps per sequence (for backprop through time)')
