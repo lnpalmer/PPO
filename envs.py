@@ -57,8 +57,8 @@ class CloudpickleWrapper(object):
 
 
 class RenderSubprocVecEnv(VecEnv):
-    def __init__(self, env_fns):
-        """ Minor addition to SubprocVecEnv to support env rendering
+    def __init__(self, env_fns, render_interval):
+        """ Minor addition to SubprocVecEnv, automatically renders environments
 
         envs: list of gym environments to run in subprocesses
         """
@@ -76,11 +76,21 @@ class RenderSubprocVecEnv(VecEnv):
         self.remotes[0].send(('get_spaces', None))
         self.action_space, self.observation_space = self.remotes[0].recv()
 
+        self.render_interval = render_interval
+        self.render_timer = 0
+
     def step(self, actions):
         for remote, action in zip(self.remotes, actions):
             remote.send(('step', action))
         results = [remote.recv() for remote in self.remotes]
         obs, rews, dones, infos = zip(*results)
+
+        self.render_timer += 1
+        if self.render_timer == self.render_interval:
+            for remote in self.remotes:
+                remote.send(('render', None))
+            self.render_timer = 0
+
         return np.stack(obs), np.stack(rews), np.stack(dones), infos
 
     def reset(self):
@@ -102,10 +112,6 @@ class RenderSubprocVecEnv(VecEnv):
         for p in self.ps:
             p.join()
         self.closed = True
-
-    def render(self):
-        for remote in self.remotes:
-            remote.send(('render', None))
 
     @property
     def num_envs(self):

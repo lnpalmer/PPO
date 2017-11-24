@@ -1,5 +1,6 @@
 import argparse
 import torch.optim as optim
+from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from baselines.common.vec_env.vec_frame_stack import VecFrameStack
 
 from envs import make_env, RenderSubprocVecEnv
@@ -24,12 +25,17 @@ parser.add_argument('--value-coef', type=float, default=1., help='value loss coe
 parser.add_argument('--entropy-coef', type=float, default=.01, help='entropy loss coeffecient')
 parser.add_argument('--max-grad-norm', type=float, default=.5, help='grad norm to clip at')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
+parser.add_argument('--render', action='store_true', help='render training environments')
+parser.add_argument('--render-interval', type=int, default=4, help='steps between environment renders')
 args = parser.parse_args()
 
 env_fns = []
 for rank in range(args.num_workers):
     env_fns.append(lambda: make_env(args.env_id, rank, args.seed + rank))
-venv = RenderSubprocVecEnv(env_fns)
+if args.render:
+    venv = RenderSubprocVecEnv(env_fns, args.render_interval)
+else:
+    venv = SubprocVecEnv(env_fns)
 venv = VecFrameStack(venv, 4)
 
 policy = {'cnn': AtariCNN}[args.arch](venv.action_space.n)
