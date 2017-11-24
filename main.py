@@ -9,21 +9,31 @@ from ppo import PPO
 
 parser = argparse.ArgumentParser(description='PPO', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('env_id', type=str, help='Gym environment id')
-parser.add_argument('--num-workers', type=int, default=8, help='number of parallel actors')
 parser.add_argument('--arch', type=str, default='cnn', help='policy architecture, {lstm, cnn}')
+parser.add_argument('--num-workers', type=int, default=8, help='number of parallel actors')
+parser.add_argument('--total-steps', type=int, default=int(10e6), help='total number of environment steps to take')
+parser.add_argument('--worker-steps', type=int, default=128, help='steps per worker between optimization rounds')
+parser.add_argument('--sequence-steps', type=int, default=32, help='steps per sequence (for backprop through time)')
+parser.add_argument('--batch-steps', type=int, default=256, help='steps per optimization minibatch')
 parser.add_argument('--lr', type=float, default=2.5e-4, help='learning rate')
+parser.add_argument('--clip', type=float, default=.1, help='probability ratio clipping range')
+parser.add_argument('--gamma', type=float, default=.99, help='discount factor')
+parser.add_argument('--lambd', type=float, default=.95, help='GAE lambda parameter')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 args = parser.parse_args()
 
 env_fns = []
 for rank in range(args.num_workers):
     env_fns.append(lambda: make_env(args.env_id, rank, args.seed + rank))
-env = RenderSubprocVecEnv(env_fns)
-env = VecFrameStack(env, 4)
+venv = RenderSubprocVecEnv(env_fns)
+venv = VecFrameStack(venv, 4)
 
-policy = {'cnn': AtariCNN}[args.arch](env.action_space.n)
+policy = {'cnn': AtariCNN}[args.arch](venv.action_space.n)
 
 optimizer = optim.Adam(policy.parameters(), lr=args.lr)
 
-algorithm = PPO(policy, env, optimizer)
-algorithm.run()
+algorithm = PPO(policy, venv, optimizer, clip=args.clip, gamma=args.gamma,
+                lambd=args.lambd, worker_steps=args.worker_steps,
+                sequence_steps=args.sequence_steps,
+                batch_steps=args.batch_steps)
+algorithm.run(args.total_steps)
