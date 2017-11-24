@@ -1,4 +1,11 @@
+import random
+import numpy as np
 import torch
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
 def cuda_if(torch_object, cuda):
     return torch_object.cuda() if cuda else torch_object

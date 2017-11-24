@@ -7,7 +7,7 @@ from baselines.common.vec_env.vec_frame_stack import VecFrameStack
 from envs import make_env, RenderSubprocVecEnv
 from models import AtariCNN
 from ppo import PPO
-from utils import cuda_if
+from utils import set_seed, cuda_if
 
 
 parser = argparse.ArgumentParser(description='PPO', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -31,6 +31,8 @@ parser.add_argument('--render', action='store_true', help='render training envir
 parser.add_argument('--render-interval', type=int, default=4, help='steps between environment renders')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 args = parser.parse_args()
+
+set_seed(args.seed)
 
 cuda = torch.cuda.is_available() and not args.no_cuda
 
