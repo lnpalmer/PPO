@@ -173,7 +173,8 @@ class PPO:
             actions[t] = action
 
             self.last_ob, reward, done, _ = self.venv.step(action.cpu().numpy())
-            rewards[t] = reward = torch.from_numpy(reward).unsqueeze(1)
+            reward = torch.from_numpy(reward).unsqueeze(1)
+            rewards[t] = torch.clamp(reward, min=-1., max=1.)
             masks[t] = mask = torch.from_numpy((1. - done)).unsqueeze(1)
 
             # statistic logic
