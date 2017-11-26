@@ -9,11 +9,11 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from torch.autograd import Variable
 
-from utils import gae, cuda_if, mean_std_groups
+from utils import gae, cuda_if, mean_std_groups, set_lr
 
 
 class PPO:
-    def __init__(self, policy, venv, optimizer, clip=.1, gamma=.99, lambd=.95,
+    def __init__(self, policy, venv, optimizer, lr_func=None, clip_func=None, gamma=.99, lambd=.95,
                  worker_steps=128, sequence_steps=32, minibatch_steps=256,
                  opt_epochs=3, value_coef=1., entropy_coef=.01, max_grad_norm=.5,
                  cuda=False, plot_reward=False, plot_points=20, plot_path='ep_reward.png'):
@@ -40,6 +40,9 @@ class PPO:
         self.venv = venv
         self.optimizer = optimizer
 
+        self.lr_func = lr_func
+        self.clip_func = clip_func
+
         self.num_workers = venv.num_envs
         self.worker_steps = worker_steps
         self.sequence_steps = sequence_steps
@@ -60,7 +63,7 @@ class PPO:
         self.reward_histr = []
         self.steps_histr = []
 
-        self.objective = PPOObjective(clip)
+        self.objective = PPOObjective()
 
         self.last_ob = self.venv.reset()
 
@@ -78,6 +81,8 @@ class PPO:
         A = self.venv.action_space.n
 
         while self.taken_steps < total_steps:
+            progress = self.taken_steps / total_steps
+
             obs, rewards, masks, actions, steps = self.interact()
             ob_shape = obs.size()[2:]
 
@@ -116,11 +121,13 @@ class PPO:
                     mb_pi_olds, mb_v_olds = self.policy_old(mb_obs)
                     mb_pi_olds, mb_v_olds = mb_pi_olds.detach(), mb_v_olds.detach()
 
-                    losses = self.objective(mb_pis, mb_vs, mb_pi_olds, mb_v_olds,
+                    losses = self.objective(self.clip_func(progress),
+                                            mb_pis, mb_vs, mb_pi_olds, mb_v_olds,
                                             mb_actions, mb_advantages, mb_returns)
                     policy_loss, value_loss, entropy_loss = losses
                     loss = policy_loss + value_loss * self.value_coef + entropy_loss * self.entropy_coef
 
+                    set_lr(self.optimizer, self.lr_func(progress))
                     self.optimizer.zero_grad()
                     loss.backward()
                     torch.nn.utils.clip_grad_norm(self.policy.parameters(), self.max_grad_norm)
@@ -204,17 +211,13 @@ class PPO:
 
 
 class PPOObjective(nn.Module):
-    def __init__(self, clip):
-        super().__init__()
-
-        self.clip = clip
-
-    def forward(self, pi, v, pi_old, v_old, action, advantage, returns):
+    def forward(self, clip, pi, v, pi_old, v_old, action, advantage, returns):
         """ Computes PPO objectives
 
         Assumes discrete action space.
 
         Args:
+            clip (float): probability ratio clipping range
             pi (Variable): discrete action logits, shaped [N x num_actions]
             v (Variable): value predictions, shaped [N x 1]
             pi_old (Variable): old discrete action logits, shaped [N x num_actions]
@@ -240,7 +243,7 @@ class PPOObjective(nn.Module):
         advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-5)
 
         surr1 = ratio * advantage
-        surr2 = torch.clamp(ratio, min=1. - self.clip, max=1. + self.clip) * advantage
+        surr2 = torch.clamp(ratio, min=1. - clip, max=1. + clip) * advantage
 
         policy_loss = -torch.min(surr1, surr2).mean()
         value_loss = (.5 * (v - returns) ** 2.).mean()

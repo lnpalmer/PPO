@@ -19,8 +19,10 @@ parser.add_argument('--total-steps', type=int, default=int(10e6), help='total nu
 parser.add_argument('--worker-steps', type=int, default=128, help='steps per worker between optimization rounds')
 parser.add_argument('--sequence-steps', type=int, default=32, help='steps per sequence (for backprop through time)')
 parser.add_argument('--minibatch-steps', type=int, default=256, help='steps per optimization minibatch')
-parser.add_argument('--lr', type=float, default=2.5e-4, help='learning rate')
-parser.add_argument('--clip', type=float, default=.1, help='probability ratio clipping range')
+parser.add_argument('--lr', type=float, default=2.5e-4, help='initial learning rate')
+parser.add_argument('--lr-func', type=str, default='linear', help='learning rate schedule function, {linear, constant}')
+parser.add_argument('--clip', type=float, default=.1, help='initial probability ratio clipping range')
+parser.add_argument('--clip-func', type=str, default='linear', help='clip range schedule function, {linear, constant}')
 parser.add_argument('--gamma', type=float, default=.99, help='discount factor')
 parser.add_argument('--lambd', type=float, default=.95, help='GAE lambda parameter')
 parser.add_argument('--value-coef', type=float, default=1., help='value loss coeffecient')
@@ -51,13 +53,24 @@ venv = VecFrameStack(venv, 4)
 policy = {'cnn': AtariCNN}[args.arch](venv.action_space.n)
 policy = cuda_if(policy, cuda)
 
-optimizer = optim.Adam(policy.parameters(), lr=args.lr)
+optimizer = optim.Adam(policy.parameters())
 
-algorithm = PPO(policy, venv, optimizer, clip=args.clip, gamma=args.gamma,
-                lambd=args.lambd, worker_steps=args.worker_steps,
-                sequence_steps=args.sequence_steps,
+if args.lr_func == 'linear':
+    lr_func = lambda a: args.lr * (1. - a)
+elif args.lr_func == 'constant':
+    lr_func = lambda a: args.lr
+
+if args.clip_func == 'linear':
+    clip_func = lambda a: args.clip * (1. - a)
+elif args.clip_func == 'constant':
+    clip_func = lambda a: args.clip
+
+algorithm = PPO(policy, venv, optimizer, lr_func=lr_func, clip_func=clip_func,
+                gamma=args.gamma, lambd=args.lambd,
+                worker_steps=args.worker_steps, sequence_steps=args.sequence_steps,
                 minibatch_steps=args.minibatch_steps,
                 value_coef=args.value_coef, entropy_coef=args.entropy_coef,
-                max_grad_norm=args.max_grad_norm, cuda=cuda,
+                max_grad_norm=args.max_grad_norm,
+                cuda=cuda,
                 plot_reward=args.plot_reward, plot_points=args.plot_points, plot_path=args.plot_path)
 algorithm.run(args.total_steps)
