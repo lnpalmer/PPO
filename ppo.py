@@ -1,5 +1,6 @@
 import random
 import copy
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as Fnn
@@ -10,7 +11,7 @@ from utils import gae, cuda_if
 
 class PPO:
     def __init__(self, policy, venv, optimizer, clip=.1, gamma=.99, lambd=.95,
-                 worker_steps=128, sequence_steps=32, batch_steps=256,
+                 worker_steps=128, sequence_steps=32, minibatch_steps=256,
                  opt_epochs=3, value_coef=1., entropy_coef=.01, max_grad_norm=.5,
                  cuda=False):
         """ Proximal Policy Optimization algorithm class
@@ -39,7 +40,7 @@ class PPO:
         self.num_workers = venv.num_envs
         self.worker_steps = worker_steps
         self.sequence_steps = sequence_steps
-        self.batch_steps = batch_steps
+        self.minibatch_steps = minibatch_steps
 
         self.opt_epochs = opt_epochs
         self.gamma = gamma
@@ -70,8 +71,9 @@ class PPO:
             obs, rewards, masks, actions, steps = self.interact()
             ob_shape = obs.size()[2:]
 
-            # compute advantages, returns with GAE
             # TEMP upgrade to support recurrence
+
+            # compute advantages, returns with GAE
             obs_ = obs.view(((T + 1) * N,) + ob_shape)
             obs_ = Variable(obs_)
             _, values = self.policy(obs_)
@@ -82,46 +84,37 @@ class PPO:
             for e in range(E):
                 self.policy.zero_grad()
 
-                S = self.sequence_steps
-                B_total = steps // self.sequence_steps
-                B = self.batch_steps // self.sequence_steps
+                MB = steps // self.minibatch_steps
 
-                batch = random.sample(range(B_total), B)
+                b_obs = Variable(obs[:T].view((steps,) + ob_shape))
+                b_rewards = Variable(rewards.view(steps, 1))
+                b_masks = Variable(masks.view(steps, 1))
+                b_actions = Variable(actions.view(steps, 1))
+                b_advantages = Variable(advantages.view(steps, 1))
+                b_returns = Variable(returns.view(steps, 1))
 
-                b_obs = Variable(obs[:T].view((S, B_total) + ob_shape)[:, batch])
-                b_rewards = Variable(rewards.view(S, B_total, 1)[:, batch])
-                b_masks = Variable(masks.view(S, B_total, 1)[:, batch])
-                b_actions = Variable(actions.view(S, B_total, 1)[:, batch])
-                b_advantages = Variable(advantages.view(S, B_total, 1)[:, batch])
-                b_returns = Variable(returns.view(S, B_total, 1)[:, batch])
+                b_inds = np.arange(steps)
+                np.random.shuffle(b_inds)
 
-                # eval policy and old policy
-                b_pis, b_vs, b_pi_olds, b_v_olds = [], [], [], []
-                for s in range(S):
-                    pi, v = self.policy(b_obs[s])
-                    b_pis.append(pi)
-                    b_vs.append(v)
-                    pi_old, v_old = self.policy_old(b_obs[s])
-                    b_pi_olds.append(pi_old)
-                    b_v_olds.append(v_old)
-                cat_fn = lambda l: torch.cat([e.unsqueeze(0) for e in l])
-                condensed = [cat_fn(item) for item in [b_pis, b_vs, b_pi_olds, b_v_olds]]
-                b_pis, b_vs, b_pi_olds, b_v_olds = tuple(condensed)
+                for start in range(0, steps, self.minibatch_steps):
+                    mb_inds = b_inds[start:start + self.minibatch_steps]
+                    mb_inds = cuda_if(torch.from_numpy(mb_inds).long(), self.cuda)
+                    mb_obs, mb_rewards, mb_masks, mb_actions, mb_advantages, mb_returns = \
+                        [arr[mb_inds] for arr in [b_obs, b_rewards, b_masks, b_actions, b_advantages, b_returns]]
 
-                losses = self.objective(b_pis.view(S * B, A),
-                                        b_vs.view(S * B, 1),
-                                        b_pi_olds.view(S * B, A).detach(),
-                                        b_v_olds.view(S * B, 1).detach(),
-                                        b_actions.view(S * B, 1),
-                                        b_advantages.view(S * B, 1),
-                                        b_returns.view(S * B, 1))
-                policy_loss, value_loss, entropy_loss = losses
+                    mb_pis, mb_vs = self.policy(mb_obs)
+                    mb_pi_olds, mb_v_olds = self.policy_old(mb_obs)
+                    mb_pi_olds, mb_v_olds = mb_pi_olds.detach(), mb_v_olds.detach()
 
-                loss = policy_loss + value_loss * self.value_coef + entropy_loss * self.entropy_coef
+                    losses = self.objective(mb_pis, mb_vs, mb_pi_olds, mb_v_olds,
+                                            mb_actions, mb_advantages, mb_returns)
+                    policy_loss, value_loss, entropy_loss = losses
+                    loss = policy_loss + value_loss * self.value_coef + entropy_loss * self.entropy_coef
 
-                loss.backward()
-                torch.nn.utils.clip_grad_norm(self.policy.parameters(), self.max_grad_norm)
-                self.optimizer.step()
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm(self.policy.parameters(), self.max_grad_norm)
+                    self.optimizer.step()
 
             taken_steps += steps
             print(taken_steps)

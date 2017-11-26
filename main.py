@@ -18,7 +18,7 @@ parser.add_argument('--opt-epochs', type=int, default=3, help='optimization epoc
 parser.add_argument('--total-steps', type=int, default=int(10e6), help='total number of environment steps to take')
 parser.add_argument('--worker-steps', type=int, default=128, help='steps per worker between optimization rounds')
 parser.add_argument('--sequence-steps', type=int, default=32, help='steps per sequence (for backprop through time)')
-parser.add_argument('--batch-steps', type=int, default=256, help='steps per optimization minibatch')
+parser.add_argument('--minibatch-steps', type=int, default=256, help='steps per optimization minibatch')
 parser.add_argument('--lr', type=float, default=2.5e-4, help='learning rate')
 parser.add_argument('--clip', type=float, default=.1, help='probability ratio clipping range')
 parser.add_argument('--gamma', type=float, default=.99, help='discount factor')
@@ -53,7 +53,7 @@ optimizer = optim.Adam(policy.parameters(), lr=args.lr)
 algorithm = PPO(policy, venv, optimizer, clip=args.clip, gamma=args.gamma,
                 lambd=args.lambd, worker_steps=args.worker_steps,
                 sequence_steps=args.sequence_steps,
-                batch_steps=args.batch_steps,
+                minibatch_steps=args.minibatch_steps,
                 value_coef=args.value_coef, entropy_coef=args.entropy_coef,
                 max_grad_norm=args.max_grad_norm, cuda=cuda)
 algorithm.run(args.total_steps)
