@@ -29,6 +29,9 @@ parser.add_argument('--max-grad-norm', type=float, default=.5, help='grad norm t
 parser.add_argument('--no-cuda', action='store_true', help='disable CUDA acceleration')
 parser.add_argument('--render', action='store_true', help='render training environments')
 parser.add_argument('--render-interval', type=int, default=4, help='steps between environment renders')
+parser.add_argument('--plot-reward', action='store_true', help='plot episode reward')
+parser.add_argument('--plot-points', type=int, default=20, help='number of plot points (groups with mean, std)')
+parser.add_argument('--plot-path', type=str, default='ep_reward.png', help='path to save reward plot to')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 args = parser.parse_args()
 
@@ -55,5 +58,6 @@ algorithm = PPO(policy, venv, optimizer, clip=args.clip, gamma=args.gamma,
                 sequence_steps=args.sequence_steps,
                 minibatch_steps=args.minibatch_steps,
                 value_coef=args.value_coef, entropy_coef=args.entropy_coef,
-                max_grad_norm=args.max_grad_norm, cuda=cuda)
+                max_grad_norm=args.max_grad_norm, cuda=cuda,
+                plot_reward=args.plot_reward, plot_points=args.plot_points, plot_path=args.plot_path)
 algorithm.run(args.total_steps)

@@ -4,16 +4,19 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as Fnn
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 from torch.autograd import Variable
 
-from utils import gae, cuda_if
+from utils import gae, cuda_if, mean_std_groups
 
 
 class PPO:
     def __init__(self, policy, venv, optimizer, clip=.1, gamma=.99, lambd=.95,
                  worker_steps=128, sequence_steps=32, minibatch_steps=256,
                  opt_epochs=3, value_coef=1., entropy_coef=.01, max_grad_norm=.5,
-                 cuda=False):
+                 cuda=False, plot_reward=False, plot_points=20, plot_path='ep_reward.png'):
         """ Proximal Policy Optimization algorithm class
 
         Evaluates a policy over a vectorized environment and
@@ -50,9 +53,18 @@ class PPO:
         self.max_grad_norm = max_grad_norm
         self.cuda = cuda
 
+        self.plot_reward = plot_reward
+        self.plot_points = plot_points
+        self.plot_path = plot_path
+        self.ep_reward = np.zeros(self.num_workers)
+        self.reward_histr = []
+        self.steps_histr = []
+
         self.objective = PPOObjective(clip)
 
         self.last_ob = self.venv.reset()
+
+        self.taken_steps = 0
 
     def run(self, total_steps):
         """ Runs PPO
@@ -60,14 +72,12 @@ class PPO:
         Args:
             total_steps (int): total number of environment steps to run for
         """
-        taken_steps = 0
-
         N = self.num_workers
         T = self.worker_steps
         E = self.opt_epochs
         A = self.venv.action_space.n
 
-        while taken_steps < total_steps:
+        while self.taken_steps < total_steps:
             obs, rewards, masks, actions, steps = self.interact()
             ob_shape = obs.size()[2:]
 
@@ -116,8 +126,8 @@ class PPO:
                     torch.nn.utils.clip_grad_norm(self.policy.parameters(), self.max_grad_norm)
                     self.optimizer.step()
 
-            taken_steps += steps
-            print(taken_steps)
+            self.taken_steps += steps
+            print(self.taken_steps)
 
     def interact(self):
         """ Interacts with the environment
@@ -144,6 +154,7 @@ class PPO:
         actions = cuda_if(actions, self.cuda)
 
         for t in range(T):
+            # interaction logic
             ob = torch.from_numpy(self.last_ob.transpose((0, 3, 1, 2))).float()
             ob = Variable(ob / 255.)
             ob = cuda_if(ob, self.cuda)
@@ -155,9 +166,32 @@ class PPO:
             actions[t] = action
 
             self.last_ob, reward, done, _ = self.venv.step(action.cpu().numpy())
-            rewards[t] = torch.from_numpy(reward).unsqueeze(1)
-            mask = torch.from_numpy((1. - done)).unsqueeze(1)
-            masks[t] = mask
+            rewards[t] = reward = torch.from_numpy(reward).unsqueeze(1)
+            masks[t] = mask = torch.from_numpy((1. - done)).unsqueeze(1)
+
+            # statistic logic
+            self.ep_reward += (reward * mask).squeeze(1).cpu().numpy()
+            for d, r in zip(done, self.ep_reward):
+                if d:
+                    self.reward_histr.append(r)
+                    self.steps_histr.append(self.taken_steps)
+
+                    group_size = len(self.steps_histr) // self.plot_points
+                    if self.plot_reward and len(self.steps_histr) % (self.plot_points * 10) == 0 and group_size >= 100:
+                        x_means, _, y_means, y_stds = \
+                            mean_std_groups(np.array(self.steps_histr), np.array(self.reward_histr), group_size)
+                        fig = plt.figure()
+                        fig.set_size_inches(8, 6)
+                        plt.ticklabel_format(axis='x', style='sci', scilimits=(-2, 6))
+                        plt.errorbar(x_means, y_means, yerr=y_stds, ecolor='xkcd:blue', fmt='xkcd:black', capsize=5, elinewidth=1.5, mew=1.5, linewidth=1.5)
+                        plt.title('Training progress')
+                        plt.xlabel('Total steps')
+                        plt.ylabel('Episode reward')
+                        plt.savefig(self.plot_path, dpi=200)
+                        plt.clf()
+                        plt.close()
+                        plot_timer = 0
+            self.ep_reward *= mask.squeeze(1).cpu().numpy()
 
         ob = torch.from_numpy(self.last_ob.transpose((0, 3, 1, 2))).float()
         ob = Variable(ob / 255.)
@@ -167,6 +201,7 @@ class PPO:
         steps = N * T
 
         return obs, rewards, masks, actions, steps
+
 
 class PPOObjective(nn.Module):
     def __init__(self, clip):
