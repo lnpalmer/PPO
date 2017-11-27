@@ -168,8 +168,9 @@ class PPO:
             obs[t] = ob.data
 
             pi, v = self.policy(ob)
-            prob = Fnn.softmax(pi)
-            action = prob.multinomial().data
+            u = cuda_if(torch.rand(pi.size()), self.cuda)
+            _, action = torch.max(pi.data - (-u.log()).log(), 1)
+            action = action.unsqueeze(1)
             actions[t] = action
 
             self.last_ob, reward, done, _ = self.venv.step(action.cpu().numpy())
