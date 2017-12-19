@@ -13,10 +13,12 @@ from utils import gae, cuda_if, mean_std_groups, set_lr
 
 
 class PPO:
-    def __init__(self, policy, venv, optimizer, lr_func=None, clip_func=None, gamma=.99, lambd=.95,
+    def __init__(self, policy, venv, test_env, optimizer,
+                 lr_func=None, clip_func=None, gamma=.99, lambd=.95,
                  worker_steps=128, sequence_steps=32, minibatch_steps=256,
                  opt_epochs=3, value_coef=1., entropy_coef=.01, max_grad_norm=.5,
-                 cuda=False, plot_reward=False, plot_points=20, plot_path='ep_reward.png'):
+                 cuda=False, plot_reward=False, plot_points=20, plot_path='ep_reward.png',
+                 test_repeat_max=100):
         """ Proximal Policy Optimization algorithm class
 
         Evaluates a policy over a vectorized environment and
@@ -27,6 +29,7 @@ class PPO:
         Args:
             policy (nn.Module): the policy to optimize
             venv (vec_env): the vectorized environment to use
+            test_env (Env): the environment to use for policy testing
             optimizer (optim.Optimizer): the optimizer to use
             clip (float): probability ratio clipping range
             gamma (float): discount factor
@@ -38,6 +41,7 @@ class PPO:
         self.policy = policy
         self.policy_old = copy.deepcopy(policy)
         self.venv = venv
+        self.test_env = test_env
         self.optimizer = optimizer
 
         self.lr_func = lr_func
@@ -69,6 +73,8 @@ class PPO:
 
         self.taken_steps = 0
 
+        self.test_repeat_max = test_repeat_max
+
     def run(self, total_steps):
         """ Runs PPO
 
@@ -85,6 +91,27 @@ class PPO:
 
             obs, rewards, masks, actions, steps = self.interact()
             ob_shape = obs.size()[2:]
+
+            ep_reward = self.test()
+            self.reward_histr.append(ep_reward)
+            self.steps_histr.append(self.taken_steps)
+
+            # statistic logic
+            group_size = len(self.steps_histr) // self.plot_points
+            if self.plot_reward and len(self.steps_histr) % (self.plot_points * 10) == 0 and group_size >= 10:
+                x_means, _, y_means, y_stds = \
+                    mean_std_groups(np.array(self.steps_histr), np.array(self.reward_histr), group_size)
+                fig = plt.figure()
+                fig.set_size_inches(8, 6)
+                plt.ticklabel_format(axis='x', style='sci', scilimits=(-2, 6))
+                plt.errorbar(x_means, y_means, yerr=y_stds, ecolor='xkcd:blue', fmt='xkcd:black', capsize=5, elinewidth=1.5, mew=1.5, linewidth=1.5)
+                plt.title('Training progress')
+                plt.xlabel('Total steps')
+                plt.ylabel('Episode reward')
+                plt.savefig(self.plot_path, dpi=200)
+                plt.clf()
+                plt.close()
+                plot_timer = 0
 
             # TEMP upgrade to support recurrence
 
@@ -178,30 +205,6 @@ class PPO:
             rewards[t] = torch.clamp(reward, min=-1., max=1.)
             masks[t] = mask = torch.from_numpy((1. - done)).unsqueeze(1)
 
-            # statistic logic
-            self.ep_reward += (reward * mask).squeeze(1).cpu().numpy()
-            for d, r in zip(done, self.ep_reward):
-                if d:
-                    self.reward_histr.append(r)
-                    self.steps_histr.append(self.taken_steps)
-
-                    group_size = len(self.steps_histr) // self.plot_points
-                    if self.plot_reward and len(self.steps_histr) % (self.plot_points * 10) == 0 and group_size >= 100:
-                        x_means, _, y_means, y_stds = \
-                            mean_std_groups(np.array(self.steps_histr), np.array(self.reward_histr), group_size)
-                        fig = plt.figure()
-                        fig.set_size_inches(8, 6)
-                        plt.ticklabel_format(axis='x', style='sci', scilimits=(-2, 6))
-                        plt.errorbar(x_means, y_means, yerr=y_stds, ecolor='xkcd:blue', fmt='xkcd:black', capsize=5, elinewidth=1.5, mew=1.5, linewidth=1.5)
-                        plt.title('Training progress')
-                        plt.xlabel('Total steps')
-                        plt.ylabel('Episode reward')
-                        plt.savefig(self.plot_path, dpi=200)
-                        plt.clf()
-                        plt.close()
-                        plot_timer = 0
-            self.ep_reward *= mask.squeeze(1).cpu().numpy()
-
         ob = torch.from_numpy(self.last_ob.transpose((0, 3, 1, 2))).float()
         ob = Variable(ob / 255.)
         ob = cuda_if(ob, self.cuda)
@@ -210,6 +213,37 @@ class PPO:
         steps = N * T
 
         return obs, rewards, masks, actions, steps
+
+    def test(self):
+        ob = self.test_env.reset()
+        done = False
+        ep_reward = 0
+        last_action = np.array([-1])
+        action_repeat = 0
+
+        while not done:
+            ob = np.array(ob)
+            ob = torch.from_numpy(ob.transpose((2, 0, 1))).float().unsqueeze(0)
+            ob = Variable(ob / 255., volatile=True)
+            ob = cuda_if(ob, self.cuda)
+
+            pi, v = self.policy(ob)
+            _, action = torch.max(pi, dim=1)
+
+            # abort after {self.test_repeat_max} discrete action repeats
+            if action.data[0] == last_action.data[0]:
+                action_repeat += 1
+                if action_repeat == self.test_repeat_max:
+                    return ep_reward
+            else:
+                action_repeat = 0
+            last_action = action
+
+            ob, reward, done, _ = self.test_env.step(action.data.cpu().numpy())
+
+            ep_reward += reward
+
+        return ep_reward
 
 
 class PPOObjective(nn.Module):

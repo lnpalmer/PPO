@@ -1,6 +1,7 @@
 import argparse
 import torch
 import torch.optim as optim
+from baselines.common.atari_wrappers import FrameStack
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from baselines.common.vec_env.vec_frame_stack import VecFrameStack
 
@@ -50,6 +51,9 @@ else:
     venv = SubprocVecEnv(env_fns)
 venv = VecFrameStack(venv, 4)
 
+test_env = make_env(args.env_id, 0, args.seed)
+test_env = FrameStack(test_env, 4)
+
 policy = {'cnn': AtariCNN}[args.arch](venv.action_space.n)
 policy = cuda_if(policy, cuda)
 
@@ -65,8 +69,8 @@ if args.clip_func == 'linear':
 elif args.clip_func == 'constant':
     clip_func = lambda a: args.clip
 
-algorithm = PPO(policy, venv, optimizer, lr_func=lr_func, clip_func=clip_func,
-                gamma=args.gamma, lambd=args.lambd,
+algorithm = PPO(policy, venv, test_env, optimizer,
+                lr_func=lr_func, clip_func=clip_func, gamma=args.gamma, lambd=args.lambd,
                 worker_steps=args.worker_steps, sequence_steps=args.sequence_steps,
                 minibatch_steps=args.minibatch_steps,
                 value_coef=args.value_coef, entropy_coef=args.entropy_coef,
